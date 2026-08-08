@@ -265,15 +265,33 @@ function docProperty(f?: Record<string, string> | null): string {
   return cleanVal(f?.propertyAddress) || cleanVal(f?.propertyOrArea);
 }
 
-/** True if `needle` (e.g. "the Johnsons" / "Johnson") refers to `name`. */
+/**
+ * True if `needle` (e.g. "the Johnsons" / "Johnson") refers to `name`.
+ *
+ * Deliberately WHOLE-TOKEN. The old substring test (`a.includes(b)`) matched a
+ * short needle anywhere inside an unrelated name — "Dan" matched "Jor-DAN Lee",
+ * so a note about Dan was written onto Jordan's record and recalled back as
+ * Jordan's. And the old multi-token branch matched on ANY shared token, so
+ * "Robert Alvarez" matched "Robert Johnson" and the memory digest attributed
+ * one client's property to another.
+ */
 function nameMatches(name: string | null | undefined, needle: string): boolean {
   const a = normName(name);
   const b = normName(needle).replace(/^the\s+/, "");
   if (!a || !b) return false;
-  if (a.includes(b) || b.includes(a)) return true;
-  // token overlap (surname match): "robert johnson" vs "the johnsons"
-  const at = new Set(a.split(" "));
-  return b.split(" ").some((t) => t.length > 2 && (at.has(t) || at.has(t.replace(/s$/, ""))));
+  if (a === b) return true;
+  const at = a.split(" ").filter(Boolean);
+  const bt = b.split(" ").filter(Boolean);
+  if (!at.length || !bt.length) return false;
+  // A token hits only as a whole word (allowing a plural "the Johnsons" and a
+  // ≥3-char prefix for truncation), never as a substring in the middle.
+  const tokenHit = (t: string) =>
+    at.some((x) => x === t || x === t.replace(/s$/, "") || (t.length >= 3 && x.startsWith(t)));
+  // Single token ("Johnson", "the Johnsons"): surname match or a whole-token hit.
+  if (bt.length === 1) return surnameStem(a) === surnameStem(b) || tokenHit(bt[0]);
+  // Multi-token ("Robert Johnson"): EVERY token must land, so a shared first
+  // name alone can never merge two different people.
+  return bt.every(tokenHit);
 }
 
 async function patchClient(
@@ -375,11 +393,25 @@ function firstName(name: string): string {
  * With surnames already matched, decide whether the first names refer to the
  * same person: identical, or one a prefix of the other (Tom/Thomas, Liz/Liza).
  */
+/**
+ * Only initials/short abbreviations count as the same first name.
+ *
+ * The old prefix test treated "Chris" and "Christine" as one person, and since
+ * every auto-learned contact is detail-free by construction it looked exactly
+ * like a deletable stub — so a real "Christine Miller" (with her notes) was
+ * HARD-DELETED when a document named "Chris Miller". Same for
+ * Sam/Samantha, Dan/Danielle, Alex/Alexandra.
+ */
 function firstNameCompatible(a: string, b: string): boolean {
   const af = firstName(a);
   const bf = firstName(b);
   if (!af || !bf) return false;
-  return af === bf || af.startsWith(bf) || bf.startsWith(af);
+  if (af === bf) return true;
+  // INITIALS ONLY. "Rob"/"Robert" is a plausible abbreviation, but so is
+  // "Sam"/"Samantha" — and this decides whether a real contact gets DELETED.
+  // A duplicate contact is recoverable; a deleted one is not.
+  const [short, long] = af.length < bf.length ? [af, bf] : [bf, af];
+  return short.length <= 2 && long.startsWith(short);
 }
 
 function roleCompatible(a: Client["role"], b: Client["role"]): boolean {
@@ -423,7 +455,27 @@ async function consolidate(accountId: string, keep: Client): Promise<Client> {
     if (d.role && d.role !== keep.role) merged.role = keep.role ? "both" : d.role;
   }
   await patchClient(accountId, keep.id, merged);
-  await admin().from("clients").delete().eq("account_id", accountId).in("id", dups.map((d) => d.id));
+  const dupIds = dups.map((d) => d.id);
+  // Re-point the merged contacts' documents BEFORE deleting them.
+  // documents.client_id is ON DELETE SET NULL, so deleting first silently cut
+  // those documents loose from the contact they belonged to — the deal history
+  // on the surviving record simply lost them.
+  const { error: repointErr } = await admin()
+    .from("documents")
+    .update({ client_id: keep.id })
+    .eq("account_id", accountId)
+    .in("client_id", dupIds);
+  if (repointErr) {
+    // Never destroy a contact we could not first detach cleanly.
+    console.error("[clients] consolidate: re-point failed, keeping duplicates", repointErr);
+    return { ...keep, ...merged };
+  }
+  const { error: delErr } = await admin()
+    .from("clients")
+    .delete()
+    .eq("account_id", accountId)
+    .in("id", dupIds);
+  if (delErr) console.error("[clients] consolidate: duplicate cleanup failed", delErr);
   return { ...keep, ...merged };
 }
 
@@ -963,6 +1015,25 @@ export async function listSignatureRequests(
   return (data as SignatureRequest[]) ?? [];
 }
 
+/**
+ * A document is locked once it has ANY signature request that is pending or
+ * signed. Pending counts because the signer is looking at the PDF right now —
+ * editing underneath them means they sign something different from what they
+ * reviewed. This lives here (not in a route) because the AI write path used by
+ * voice/SMS/chat must honour it too.
+ */
+export async function isLocked(accountId: string, docId: string): Promise<boolean> {
+  const { data, error } = await admin()
+    .from("signature_requests")
+    .select("id")
+    .eq("account_id", accountId)
+    .eq("document_id", docId)
+    .in("status", ["pending", "signed"])
+    .limit(1);
+  if (error) throw new Error(`isLocked failed: ${error.message}`);
+  return (data ?? []).length > 0;
+}
+
 /** Latest completed signature for a document, if any (signed PDFs chain). */
 export async function latestSignedRequest(documentId: string): Promise<SignatureRequest | null> {
   const { data, error } = await admin()
@@ -988,13 +1059,21 @@ export interface SmsTurn {
   content: string;
 }
 
-export async function getSmsSession(phone: string): Promise<SmsTurn[]> {
+export async function getSmsSession(phone: string, accountId: string): Promise<SmsTurn[]> {
+  // Scoped by ACCOUNT as well as phone. Looking up by phone alone meant a
+  // recycled/ported number — or an assistant removed from one account and
+  // registered under another brokerage — replayed the previous tenant's client
+  // names and deal terms into the new tenant's context.
+  // Also time-bounded: a months-old thread is not useful context, and stale
+  // memory makes the assistant confidently wrong.
   // ui-error-ok: losing conversation memory degrades the reply but must never
   // break an inbound text; an empty transcript is the safe fallback.
   const { data } = await admin()
     .from("sms_sessions")
     .select("transcript")
     .eq("phone", phone)
+    .eq("account_id", accountId)
+    .gte("updated_at", new Date(Date.now() - 6 * 3600_000).toISOString())
     .maybeSingle();
   return ((data?.transcript as SmsTurn[]) ?? []) as SmsTurn[];
 }

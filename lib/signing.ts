@@ -1,4 +1,4 @@
-import { createSignatureRequest, getDocument, getProfile } from "@/lib/db";
+import { createSignatureRequest, getDocument, getProfile, latestSignedRequest } from "@/lib/db";
 import { isDocType, missingRequired, userFields } from "@/lib/templates";
 import type { DocType } from "@/lib/types";
 import { makeSignToken } from "@/lib/share";
@@ -33,11 +33,32 @@ export async function requestSignature(
   const doc = await getDocument(accountId, input.documentId);
   if (!doc) return { ok: false, message: "Document not found." };
 
+  // A second signing round would ERASE the first: the sign route renders the
+  // unsigned source and appends only the new certificate, and that becomes the
+  // document of record everywhere. Two-party signing must go through an
+  // amendment/duplicate until countersigning exists.
+  if (await latestSignedRequest(doc.id)) {
+    return {
+      ok: false,
+      message: "That document is already executed — duplicate it to start a new signing round.",
+    };
+  }
+
+  // Uploaded templates have no required-field metadata, so the "missing
+  // fields" check below can't protect them: without this a client can be
+  // walked through signing a completely blank scanned agreement.
+  if (doc.template_id && Object.values(doc.fields).every((v) => !String(v).trim())) {
+    return { ok: false, message: "Fill in the form before sending it for signature." };
+  }
+
   // Never send a half-empty legal document out for signature. (Uploaded forms
   // — including orphans whose template was deleted — have no required-field
   // metadata, so only built-in types are checked.)
+  const agentProfile = await getProfile(accountId).catch(() => null);
   if (!doc.template_id && isDocType(doc.type)) {
-    const missingKeys = missingRequired(doc.type as DocType, doc.fields);
+    // Pass the profile: required fields that auto-fill from it (e.g. the ICA's
+    // brokerage firm) were previously unverifiable and shipped blank.
+    const missingKeys = missingRequired(doc.type as DocType, doc.fields, agentProfile);
     if (missingKeys.length) {
       const fields = userFields(doc.type as DocType);
       const labels = missingKeys.map((k) => fields.find((f) => f.key === k)?.label ?? k);
@@ -68,7 +89,7 @@ export async function requestSignature(
   // Email is the only server-side delivery channel. Texting the signer happens
   // from the AGENT's own phone (tap-to-send in the Signatures panel) so the
   // signer sees the agent's real number — never re-add a Twilio send here.
-  const agent = await getProfile(accountId).catch(() => null);
+  const agent = agentProfile;
   const emailed =
     email && emailConfigured()
       ? await sendEmail({

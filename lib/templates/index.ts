@@ -1,4 +1,5 @@
 import type { DocType } from "@/lib/types";
+import type { AgentProfile } from "@/lib/types";
 import type { TemplateDef } from "./types";
 import { generatedTemplates } from "./generated";
 
@@ -38,13 +39,33 @@ export function userFields(type: DocType) {
   return templates[type]?.fields.filter((f) => !f.source) ?? [];
 }
 
-/** Required user fields that are still empty in the given values. */
+/**
+ * Required fields that are still empty.
+ *
+ * Built on ALL fields, not `userFields` — a field that is both required and
+ * profile-sourced (independent_contractor.brokerageFirm) could never be
+ * reported missing, so an ICA was filed and sent for signature with one of its
+ * two named parties blank whenever the agent hadn't set a brokerage name.
+ * Pass `profile` so those fields are checked against what will actually print.
+ *
+ * A lone dash is the "intentionally blank" sentinel the assistant writes for
+ * skipped OPTIONAL lines; it must never satisfy a REQUIRED field like list
+ * price or commission.
+ */
+const BLANK_SENTINEL = /^(-|—|–|n\/a|none)$/i;
+
 export function missingRequired(
   type: DocType,
   values: Record<string, string>,
+  profile?: AgentProfile | null,
 ): string[] {
-  return userFields(type)
-    .filter((f) => f.required && !values[f.key]?.trim())
+  return (templates[type]?.fields ?? [])
+    .filter((f) => {
+      if (!f.required) return false;
+      const raw = f.source ? profile?.[f.source] ?? "" : values[f.key] ?? "";
+      const v = String(raw).trim();
+      return !v || BLANK_SENTINEL.test(v);
+    })
     .map((f) => f.key);
 }
 

@@ -74,6 +74,7 @@ export async function fillDocument(
   if (tpl.kind === "acroform") {
     const pdf = await PDFDocument.load(bytes);
     const form = pdf.getForm();
+    const helv = await pdf.embedFont(StandardFonts.Helvetica);
     for (const field of tpl.fields) {
       const value = field.source
         ? profile?.[field.source] ?? ""
@@ -86,13 +87,20 @@ export async function fillDocument(
           if (CHECK_TRUTHY.test(v)) cb.check();
           else cb.uncheck();
         } else {
-          form.getTextField(field.key).setText(drawable(v));
+          const tf = form.getTextField(field.key);
+          const text = drawable(v);
+          tf.setText(text);
+          // The generator writes a fixed 9.5pt /DA and flatten clips to the
+          // widget box, so a long name (e.g. two full seller names in a
+          // narrow column) silently truncated on the delivered PDF.
+          const rect = tf.acroField.getWidgets()[0]?.getRectangle();
+          if (rect && text && helv.widthOfTextAtSize(text, 9.5) > rect.width - 4) tf.setFontSize(0);
         }
       } catch {
         // Schema/PDF mismatch on one field — leave it blank rather than fail.
       }
     }
-    form.updateFieldAppearances(await pdf.embedFont(StandardFonts.Helvetica));
+    form.updateFieldAppearances(helv);
     form.flatten();
     return pdf.save();
   }
@@ -134,7 +142,7 @@ function drawFitted(
   // Sanitize BEFORE measuring: widthOfTextAtSize throws on characters the
   // standard fonts can't encode, and measuring the original while drawing the
   // sanitized string would compute the wrong fit.
-  let out = drawable(text);
+  let out = drawable(text).replace(/[\r\n\t]+/g, " ");
 
   if (p.maxWidth) {
     // Shrink to fit, down to a readable minimum.
@@ -191,24 +199,52 @@ export async function fillTemplateDocument(
   if (template.kind === "acroform") {
     const pdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
     const form = pdf.getForm();
+    // Values the agent set but we could not write. A dropped value on a legal
+    // document must never ship silently — the old bare `catch {}` did exactly
+    // that, and an uploaded PDF's own baked-in defaults then survived flatten.
+    const failed: string[] = [];
+    const helv = await pdf.embedFont(StandardFonts.Helvetica);
     for (const field of template.fields) {
-      const value = (values[field.key] ?? "").trim();
-      if (!value) continue;
+      const raw = values[field.key];
       const name = field.acro_name ?? field.key;
       try {
         if (field.type === "checkbox") {
+          // ALWAYS write a checkbox. Skipping on empty meant "No" could never
+          // clear a box the source PDF ships pre-checked — the delivered
+          // contract kept saying Yes.
           const cb = form.getCheckBox(name);
-          if (CHECK_TRUTHY.test(value)) cb.check();
+          if (CHECK_TRUTHY.test(String(raw ?? "").trim())) cb.check();
           else cb.uncheck();
-        } else if (field.type === "dropdown") {
-          form.getDropdown(name).select(value);
-        } else {
-          form.getTextField(name).setText(drawable(value));
+          continue;
         }
+        // Key genuinely absent → leave the PDF as-is. Present but empty →
+        // write through, so an explicit blank clears a baked-in default.
+        if (raw === undefined) continue;
+        const value = String(raw).trim();
+        if (field.type === "dropdown") {
+          // Radio groups and option lists are detected as "dropdown" but
+          // getDropdown() throws for them, and the throw used to be eaten —
+          // every radio choice silently blank on the executed PDF.
+          const f = form.getField(name);
+          if (f instanceof PDFDropdown || f instanceof PDFRadioGroup || f instanceof PDFOptionList) {
+            if (value) f.select(value);
+          } else {
+            failed.push(field.key);
+          }
+          continue;
+        }
+        const tf = form.getTextField(name);
+        const text = drawable(value);
+        tf.setText(text);
+        // Flatten clips to the widget box, so an overlong value vanishes from
+        // the page while the record still holds it. Let pdf-lib auto-fit.
+        const rect = tf.acroField.getWidgets()[0]?.getRectangle();
+        if (rect && text && helv.widthOfTextAtSize(text, 9.5) > rect.width - 4) tf.setFontSize(0);
       } catch {
-        // Field type mismatch / value not an allowed option — skip it.
+        failed.push(field.key);
       }
     }
+    if (failed.length) console.error("[pdf] fields could not be written", { template: template.id, failed });
     form.flatten();
     return pdf.save();
   }

@@ -14,7 +14,10 @@ export function openai(): OpenAI {
   if (!_client) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
-    _client = new OpenAI({ apiKey });
+    // Bound the call INSIDE the serverless function's own ceiling. The SDK
+    // default is 10 minutes against a 60s function, so a hang was killed by the
+    // platform as a 504 — after tool side effects had already landed.
+    _client = new OpenAI({ apiKey, timeout: 20_000, maxRetries: 1 });
   }
   return _client;
 }

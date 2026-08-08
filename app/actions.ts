@@ -26,6 +26,7 @@ import {
   setMemberStatus,
   updateClient,
   updateDocument,
+  isLocked,
 } from "@/lib/db";
 import { logActivity } from "@/lib/activity";
 import { requestSignature } from "@/lib/signing";
@@ -489,18 +490,6 @@ export async function newDocumentAction(type: DocType) {
   redirect(`/documents/${doc.id}`);
 }
 
-/** True once any signature request on this document has been signed. */
-async function isExecuted(accountId: string, docId: string): Promise<boolean> {
-  const { data } = await admin()
-    .from("signature_requests")
-    .select("id")
-    .eq("account_id", accountId)
-    .eq("document_id", docId)
-    .eq("status", "signed")
-    .limit(1);
-  return (data ?? []).length > 0;
-}
-
 export async function saveDocumentFieldsAction(docId: string, formData: FormData) {
   const { accountId } = await requireAccount();
   const doc = await getDocument(accountId, docId);
@@ -508,7 +497,7 @@ export async function saveDocumentFieldsAction(docId: string, formData: FormData
   // The editor disables its inputs on an executed document, but that's only
   // rendering — enforce the lock server-side too, so the stored fields can
   // never drift from what was actually signed.
-  if (await isExecuted(accountId, docId)) return;
+  if (await isLocked(accountId, docId)) return;
   let valid: string[];
   if (doc.template_id) {
     const ft = await getFormTemplate(accountId, doc.template_id);
@@ -634,7 +623,8 @@ export async function prepareDocumentTextAction(
   const { accountId, userId } = await requireAccount();
   const doc = await getDocument(accountId, docId);
   if (!doc) return { ok: false, error: "Document not found." };
-  if (!doc.template_id && missingRequired(doc.type as DocType, doc.fields).length) {
+  const prof = await getProfile(accountId).catch(() => null);
+  if (!doc.template_id && missingRequired(doc.type as DocType, doc.fields, prof).length) {
     return { ok: false, error: "Fill the required fields before sending." };
   }
   const docName = doc.template_id ? doc.title || "document" : getTemplate(doc.type)?.name || doc.title || "document";
@@ -652,7 +642,8 @@ export async function setDocumentStatusAction(docId: string, complete: boolean):
   const { accountId, userId } = await requireAccount();
   const doc = await getDocument(accountId, docId);
   if (!doc) return { ok: false, error: "Document not found." };
-  if (complete && !doc.template_id && missingRequired(doc.type as DocType, doc.fields).length > 0) {
+  const profileForCheck = complete ? await getProfile(accountId).catch(() => null) : null;
+  if (complete && !doc.template_id && missingRequired(doc.type as DocType, doc.fields, profileForCheck).length > 0) {
     return { ok: false, error: "Save the document first — required fields are still empty on the saved copy." };
   }
   await updateDocument(accountId, docId, { status: complete ? "completed" : "draft" });

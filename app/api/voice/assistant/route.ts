@@ -155,9 +155,16 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error("[voice] context build threw — call proceeds ungated/uncapped", err);
   }
+  // The context build lost its race (or threw). Fail SAFE on cost: without the
+  // plan gate and trial cap this fell through to the assistant's own 1500s
+  // ceiling, so an expired account got a free 25-minute call. Cap the call and
+  // say so, rather than silently handing out unmetered minutes.
   return NextResponse.json({
     assistantId: ASSISTANT_ID,
-    assistantOverrides: { variableValues: { memoryDigest: baseContext() } },
+    assistantOverrides: {
+      variableValues: { memoryDigest: baseContext() },
+      maxDurationSeconds: 300,
+    },
   });
 }
 
@@ -272,7 +279,10 @@ async function buildOverrides(
   ]
     .filter(Boolean)
     .join(" ");
-  lines.push(`${who}. Their number is registered — they're verified by caller id.`);
+  // Caller ID is a ROUTING hint, not authentication — it is settable on any
+  // SIP trunk. Never tell the model the caller is "verified": it then hands
+  // out the client book on request.
+  lines.push(`${who}. This number matches their account, but caller ID is not proof of identity.`);
 
   if (draft) {
     const title = draft.title || "an untitled document";
