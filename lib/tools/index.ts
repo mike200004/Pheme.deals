@@ -244,11 +244,24 @@ const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 function makeResolver(fields: { key: string; label: string }[]): (k: string) => string | null {
   const map = new Map<string, string>();
+  // Uploaded forms routinely repeat a label ("Date" on pages 1 and 4) and only
+  // the KEY is suffixed. Overwriting meant every "Date" answer landed in the
+  // last one — the tool reported success, the earlier blank stayed empty, and
+  // the phone walkthrough re-asked the same field forever. An ambiguous label
+  // must resolve to nothing so it surfaces as a rejected key instead.
+  const ambiguous = new Set<string>();
   for (const f of fields) {
     map.set(norm(f.key), f.key);
-    if (f.label) map.set(norm(f.label), f.key);
+    const l = norm(f.label);
+    if (!l) continue;
+    if (map.has(l) && map.get(l) !== f.key) ambiguous.add(l);
+    else map.set(l, f.key);
   }
-  return (incoming: string) => map.get(norm(incoming)) ?? null;
+  return (incoming: string) => {
+    const n = norm(incoming);
+    if (ambiguous.has(n)) return null;
+    return map.get(n) ?? null;
+  };
 }
 
 /** Field schema for a document — built-in template OR uploaded form template. */

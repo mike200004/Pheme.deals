@@ -67,10 +67,19 @@ export async function POST(req: NextRequest) {
 
   // Idempotency: first delivery inserts, redeliveries find the row and ack.
   if (event.id) {
-    const { data: seen } = await admin()
+    const { data: seen, error: ledgerErr } = await admin()
       .from("stripe_events")
       .upsert({ id: event.id, type: event.type }, { onConflict: "id", ignoreDuplicates: true })
       .select("id");
+    // A FAILED write used to yield null, which reads exactly like "already
+    // processed" — we answered 200 duplicate and Stripe never redelivered.
+    // For customer.subscription.deleted that is unrecoverable: the row stays
+    // active and a canceled account keeps paid access indefinitely. 500 so
+    // Stripe retries.
+    if (ledgerErr) {
+      console.error("[stripe] idempotency ledger write failed", ledgerErr);
+      return NextResponse.json({ error: "Ledger unavailable" }, { status: 500 });
+    }
     if ((seen ?? []).length === 0) return NextResponse.json({ received: true, duplicate: true });
   }
 
@@ -204,7 +213,12 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     // Return 500 so Stripe retries — but only for genuinely unprocessed work.
     console.error(`[stripe] ${event.type} failed`, err);
-    if (event.id) await admin().from("stripe_events").delete().eq("id", event.id);
+    if (event.id) {
+      // If this delete fails the retry finds the ledger row and is dropped
+      // forever — surface it rather than losing the event silently.
+      const { error: delErr } = await admin().from("stripe_events").delete().eq("id", event.id);
+      if (delErr) console.error("[stripe] CRITICAL: could not clear ledger row; retries of", event.id, "will be dropped", delErr);
+    }
     return NextResponse.json({ error: "Processing failed" }, { status: 500 });
   }
 
