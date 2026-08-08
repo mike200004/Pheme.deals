@@ -25,6 +25,7 @@ import type { Placement } from "@/lib/templates/types";
 import { BUCKET, downloadTemplateFile } from "@/lib/storage";
 import { getFormTemplate, getProfile, latestSignedRequest } from "@/lib/db";
 import { admin } from "@/lib/supabase/admin";
+import { drawable } from "@/lib/pdf/text";
 
 const INK = rgb(0.06, 0.09, 0.23);
 
@@ -85,7 +86,7 @@ export async function fillDocument(
           if (CHECK_TRUTHY.test(v)) cb.check();
           else cb.uncheck();
         } else {
-          form.getTextField(field.key).setText(v);
+          form.getTextField(field.key).setText(drawable(v));
         }
       } catch {
         // Schema/PDF mismatch on one field — leave it blank rather than fail.
@@ -130,7 +131,10 @@ function drawFitted(
   p: Placement,
 ) {
   let size = p.size ?? 9;
-  let out = text;
+  // Sanitize BEFORE measuring: widthOfTextAtSize throws on characters the
+  // standard fonts can't encode, and measuring the original while drawing the
+  // sanitized string would compute the wrong fit.
+  let out = drawable(text);
 
   if (p.maxWidth) {
     // Shrink to fit, down to a readable minimum.
@@ -199,7 +203,7 @@ export async function fillTemplateDocument(
         } else if (field.type === "dropdown") {
           form.getDropdown(name).select(value);
         } else {
-          form.getTextField(name).setText(value);
+          form.getTextField(name).setText(drawable(value));
         }
       } catch {
         // Field type mismatch / value not an allowed option — skip it.
@@ -312,7 +316,7 @@ export async function stampSignaturePage(
   const row = (label: string, value: string) => {
     page.drawText(label.toUpperCase(), { x: 64, y, size: 8, font: bold, color: muted });
     y -= 14;
-    page.drawText(value.slice(0, 95), { x: 64, y, size: 11, font, color: ink });
+    page.drawText(drawable(value).slice(0, 95), { x: 64, y, size: 11, font, color: ink });
     y -= 24;
   };
 
@@ -337,7 +341,7 @@ export async function stampSignaturePage(
     y -= 10;
   } else {
     y -= 34;
-    page.drawText(stamp.signerName, { x: 64, y, size: 26, font: italic, color: ink });
+    page.drawText(drawable(stamp.signerName), { x: 64, y, size: 26, font: italic, color: ink });
     y -= 10;
   }
   page.drawLine({ start: { x: 64, y }, end: { x: 340, y }, thickness: 1, color: ink });
@@ -345,7 +349,7 @@ export async function stampSignaturePage(
 
   const consentLines = wrap(stamp.consentText, 92);
   for (const line of consentLines) {
-    page.drawText(line, { x: 64, y, size: 8.5, font, color: muted });
+    page.drawText(drawable(line), { x: 64, y, size: 8.5, font, color: muted });
     y -= 12;
   }
 
