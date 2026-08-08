@@ -31,16 +31,42 @@ function button(href: string, label: string): string {
   <p style="font-size:12px;color:#8a8175;">If the button doesn't work, copy this link:<br>${escapeHtml(href)}</p>`;
 }
 
-export async function sendWelcomeEmail(to: string, name: string): Promise<void> {
+/**
+ * Sent at SIGNUP, while the account is still pending approval.
+ *
+ * The previous copy told every new signup their account was live, their trial
+ * had started, and to call the number — all false for a pending user, whose
+ * call lands on the unregistered branch. Say only what is true.
+ */
+export async function sendWaitlistEmail(to: string, name: string): Promise<void> {
   if (!emailConfigured()) return;
   const first = escapeHtml(name.trim().split(/\s+/)[0] || "there");
   await sendEmail({
     to,
-    subject: "Welcome to Pheme — your assistant is ready",
+    subject: "You're on the list for Pheme",
     html: layout(
-      "Welcome to Pheme",
+      "You're on the list",
       `<p>Hi ${first},</p>
-       <p>Your account is live and your <strong>14-day free trial</strong> has started — it includes
+       <p>Thanks for signing up. Pheme is in private beta, so your account is
+       <strong>pending approval</strong> — we review new accounts by hand, and you'll get an
+       email from us the moment you're in.</p>
+       <p>Nothing to do until then. Your 14-day trial starts when you're approved, not now, so
+       none of it goes to waste while you wait.</p>`,
+    ),
+  });
+}
+
+/** Sent when an owner is actually approved — this is the real welcome. */
+export async function sendApprovedEmail(to: string, name: string): Promise<void> {
+  if (!emailConfigured()) return;
+  const first = escapeHtml(name.trim().split(/\s+/)[0] || "there");
+  await sendEmail({
+    to,
+    subject: "You're in — welcome to Pheme",
+    html: layout(
+      "You're in",
+      `<p>Hi ${first},</p>
+       <p>Your account is approved and your <strong>14-day free trial</strong> starts now — it includes
        <strong>30 voice-assistant minutes</strong>, plus unlimited documents, uploads, and e-signatures.</p>
        <p>Three things to try first:</p>
        <ol style="padding-left:20px;">
