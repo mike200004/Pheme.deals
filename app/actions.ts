@@ -51,7 +51,7 @@ import { generateAuthLink } from "@/lib/auth-links";
 import {
   sendInviteEmail,
   sendPasswordResetEmail,
-  sendWelcomeEmail,
+  sendWaitlistEmail,
 } from "@/lib/emails";
 import { defer } from "@/lib/defer";
 import type { AgentProfile, ContactRole, DocType, PlanKey } from "@/lib/types";
@@ -155,7 +155,7 @@ export async function createAccountAction(input: {
 
   // Welcome email (best-effort, after the response).
   defer(async () => {
-    await sendWelcomeEmail(email, input.agent_name ?? "").catch(() => {});
+    await sendWaitlistEmail(email, input.agent_name ?? "").catch(() => {});
   });
 
   return { ok: true };

@@ -135,6 +135,10 @@ const tools = [
     },
     required: ["document_id", "signer_name"],
   }, { say: ["Sending it out for signature."], delayedSay: "One more second.", delayed: 7000, timeout: 60 }),
+  fn("list_pending_signatures", "Check who still has to sign — every outstanding signature request with signer, document and how long it's been waiting. Call this whenever the agent asks what's outstanding or whether something is done; never claim a document is complete without it.", {
+    type: "object",
+    properties: { document_id: { type: "string", description: "Optional — limit to one document." } },
+  }),
   fn("list_documents", "List recent documents (title, status). Use when they reference an earlier document by name or ask what got filed.", {
     type: "object",
     properties: { query: { type: "string", description: "Optional title filter." } },

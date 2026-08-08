@@ -14,6 +14,7 @@ import {
   rememberParties,
   updateDocument,
   isLocked,
+  listSignatureRequests,
 } from "@/lib/db";
 import { logActivity } from "@/lib/activity";
 import { defer } from "@/lib/defer";
@@ -201,6 +202,17 @@ export const toolSpecs: ToolSpec[] = [
         signer_phone: { type: "string", description: "Signer's mobile number (alternative)." },
       },
       required: ["document_id", "signer_name"],
+    },
+  },
+  {
+    name: "list_pending_signatures",
+    description:
+      "Check who still has to sign. Returns every signature request that is awaiting signature, with the signer, their contact, the document, and how long it's been waiting — plus anything signed recently. Call this whenever the agent asks who hasn't signed, what's outstanding, or whether a document is done. NEVER say a document is complete without checking this.",
+    parameters: {
+      type: "object",
+      properties: {
+        document_id: { type: "string", description: "Optional — limit to one document." },
+      },
     },
   },
   {
@@ -767,6 +779,36 @@ export async function runTool(
         actorId: ctx.actorId ?? null,
       });
       return rs;
+    }
+
+    case "list_pending_signatures": {
+      const docId = input.document_id ? String(input.document_id) : undefined;
+      const reqs = await listSignatureRequests(acc, docId);
+      const docs = await listDocuments(acc, { limit: 200 });
+      const titleFor = (id: string) => docs.find((d) => d.id === id)?.title || "a document";
+      const days = (iso: string) => Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 86_400_000));
+      const pending = reqs
+        .filter((r) => r.status === "pending")
+        .map((r) => ({
+          signer: r.signer_name || "(unnamed)",
+          contact: r.signer_email || r.signer_phone || "no contact on file",
+          document: titleFor(r.document_id),
+          document_id: r.document_id,
+          waiting_days: days(r.created_at),
+        }));
+      const signed = reqs
+        .filter((r) => r.status === "signed")
+        .slice(0, 5)
+        .map((r) => ({ signer: r.signer_name, document: titleFor(r.document_id), signed_days_ago: r.signed_at ? days(r.signed_at) : null }));
+      return {
+        ok: true,
+        pending_count: pending.length,
+        pending,
+        recently_signed: signed,
+        message: pending.length
+          ? `${pending.length} signature${pending.length === 1 ? "" : "s"} still outstanding.`
+          : "Nothing is waiting on a signature.",
+      };
     }
 
     case "list_documents": {
