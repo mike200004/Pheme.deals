@@ -41,18 +41,30 @@ export default function Chat() {
       // us into the generic "Network error" path before we read res.ok.
       const data = await res.json().catch(() => ({} as { error?: string; messages?: ApiMessage[]; reply?: string }));
       if (!res.ok) {
-        // Roll the failed turn back so retrying doesn't double the message.
-        apiMessages.current = apiMessages.current.slice(0, -1);
-        setInput(text);
-        setError(data.error || "Something went wrong — your message wasn't sent.");
+        // Only invite a resend when the request certainly did NOT run tools.
+        // A 500/504 can arrive AFTER documents were created and emails sent,
+        // and "your message wasn't sent" made agents resend — mailing the
+        // client a second copy of the same contract.
+        const safeToResend = [400, 401, 403, 429, 503].includes(res.status);
+        if (safeToResend) {
+          apiMessages.current = apiMessages.current.slice(0, -1);
+          setInput(text);
+          setError(data.error || "That didn't go through — try again.");
+        } else {
+          setError(
+            data.error ||
+              "I lost the connection partway through. Check your dashboard before resending — part of that may already have gone out.",
+          );
+        }
       } else {
         apiMessages.current = data.messages;
         setUi((m) => [...m, { role: "assistant", text: data.reply || "(no response)" }]);
       }
     } catch {
-      apiMessages.current = apiMessages.current.slice(0, -1);
-      setInput(text);
-      setError("Network error — your message wasn't sent. Try again.");
+      // A transport failure can still leave server-side work done.
+      setError(
+        "I lost the connection. Check your dashboard before resending — part of that may already have gone out.",
+      );
     } finally {
       setBusy(false);
     }

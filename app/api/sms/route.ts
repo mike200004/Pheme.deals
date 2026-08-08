@@ -54,7 +54,17 @@ export async function POST(req: NextRequest) {
     return twiml("The assistant is temporarily unavailable. Please try again shortly.");
   }
 
-  const form = await req.formData();
+  // Twilio abandons this webhook at ~15s; anything slower must degrade to a
+  // reply, never to silence.
+  const SMS_DEADLINE_MS = 11_000;
+  const startedAt = Date.now();
+
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch {
+    return twiml("Sorry, I couldn't read that message. Please try again.");
+  }
   const params: Record<string, string> = {};
   form.forEach((v, k) => {
     params[k] = String(v);
@@ -98,7 +108,7 @@ export async function POST(req: NextRequest) {
 
   if (!text) return twiml("Tell me what document you'd like to work on.");
 
-  const history = await getSmsSession(phone);
+  const history = await getSmsSession(phone, actor.accountId);
   const transcript: SmsTurn[] = [...history, { role: "user", content: text }];
 
   try {
@@ -109,13 +119,20 @@ export async function POST(req: NextRequest) {
       actorPhone: phone,
       role: actor.role,
       systemSuffix: SMS_SUFFIX,
+      maxRounds: 3,
+      deadlineAt: startedAt + SMS_DEADLINE_MS,
     });
     const finalReply = reply || "Sorry, I didn't catch that — could you rephrase?";
     const updated: SmsTurn[] = [
       ...transcript,
       { role: "assistant" as const, content: finalReply },
     ].slice(-MAX_TURNS);
-    await saveSmsSession(phone, actor.accountId, updated);
+    // If we blew the deadline Twilio has already given up, so the agent never
+    // saw this reply — persisting it would make the next message answer
+    // against a phantom turn ("as I said, it's filed").
+    if (Date.now() - startedAt < SMS_DEADLINE_MS) {
+      await saveSmsSession(phone, actor.accountId, updated);
+    }
     return twiml(finalReply);
   } catch (err) {
     console.error("SMS error:", err);

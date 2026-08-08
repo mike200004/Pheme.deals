@@ -33,6 +33,8 @@ export async function runConversation(
     actorPhone?: string;
     role?: "owner" | "assistant";
     maxRounds?: number;
+    /** Wall-clock stop: summarise rather than run past the caller's timeout. */
+    deadlineAt?: number;
     systemSuffix?: string;
   },
 ): Promise<ConversationResult> {
@@ -68,6 +70,9 @@ export async function runConversation(
   const maxRounds = opts.maxRounds ?? 8;
 
   for (let round = 0; round < maxRounds; round++) {
+    // Twilio abandons the webhook at ~15s; stop early and summarise instead of
+    // being killed mid-flight after tools already ran.
+    if (opts.deadlineAt && Date.now() > opts.deadlineAt) break;
     const completion = await client.chat.completions.create({
       model: MODEL,
       messages,
@@ -119,6 +124,19 @@ export async function runConversation(
     }
   }
 
+  // Round budget exhausted. The tool calls ALREADY RAN — documents created,
+  // filed, signature emails sent to real clients. Telling the agent it failed
+  // made them rephrase, which created a SECOND document and mailed the client
+  // a second signature request. Summarise what actually happened instead.
+  if (toolEvents.length) {
+    const done = toolEvents.map((e) => e.tool).join(", ");
+    return {
+      reply:
+        "That took more steps than I can do in one go, but here's what I already did: " +
+        `${done}. Check your dashboard before asking again so nothing gets duplicated.`,
+      toolEvents,
+    };
+  }
   return {
     reply: "Sorry, that took too many steps — could you rephrase?",
     toolEvents,

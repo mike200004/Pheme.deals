@@ -13,12 +13,13 @@ import {
   rememberAboutClient,
   rememberParties,
   updateDocument,
+  isLocked,
 } from "@/lib/db";
 import { logActivity } from "@/lib/activity";
 import { defer } from "@/lib/defer";
 import { requestSignature } from "@/lib/signing";
 import { getTemplate, isDocType, missingRequired, templateList, userFields } from "@/lib/templates";
-import type { ContactRole, DocumentRecord } from "@/lib/types";
+import type { AgentProfile, ContactRole, DocumentRecord } from "@/lib/types";
 import { makeShareToken } from "@/lib/share";
 import { sendEmail, emailConfigured, escapeHtml } from "@/lib/email";
 import { renderDocument } from "@/lib/pdf/fill";
@@ -224,8 +225,8 @@ function fieldSchemaFor(type: DocType) {
   }));
 }
 
-function missingLabels(type: DocType, values: Record<string, string>) {
-  const keys = missingRequired(type, values);
+function missingLabels(type: DocType, values: Record<string, string>, profile?: AgentProfile | null) {
+  const keys = missingRequired(type, values, profile);
   const fields = userFields(type);
   return keys.map((k) => fields.find((f) => f.key === k)?.label ?? k);
 }
@@ -532,6 +533,16 @@ export async function runTool(
       const docId = String(input.document_id);
       const doc = await getDocument(acc, docId);
       if (!doc) return { error: `Document ${docId} not found` };
+      // The executed-document lock used to live only in the web form action,
+      // so "actually the fee is 3%" over the phone silently rewrote the record
+      // of a SIGNED contract — and every later copy carried terms nobody
+      // agreed to.
+      if (await isLocked(acc, docId)) {
+        return {
+          ok: false,
+          message: "That document is out for signature or already executed, so it's locked. Want me to start an amendment instead?",
+        };
+      }
       const schema = await docSchema(acc, doc);
       const incoming = (input.fields as Record<string, string>) ?? {};
       const accepted: Record<string, string> = {};
@@ -594,8 +605,15 @@ export async function runTool(
       const docId = String(input.document_id);
       const doc = await getDocument(acc, docId);
       if (!doc) return { error: `Document ${docId} not found — use the id returned by create_document, or find it with list_documents.` };
+      if (await isLocked(acc, docId)) {
+        return {
+          ok: false,
+          message: "That document is out for signature or already executed, so it's locked.",
+        };
+      }
       // Uploaded forms have no required-field metadata — skip the template fetch.
-      const missing = !doc.template_id && isDocType(doc.type) ? missingLabels(doc.type, doc.fields) : [];
+      const finalizeProfile = await getProfile(acc).catch(() => null);
+      const missing = !doc.template_id && isDocType(doc.type) ? missingLabels(doc.type, doc.fields, finalizeProfile) : [];
       if (missing.length) {
         return {
           ok: false,
