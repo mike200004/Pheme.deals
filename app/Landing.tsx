@@ -118,7 +118,7 @@ export default function Landing() {
         </p>
         <div className="heroCtas">
           <Link href="/signup" className="btn btnPrimary btnLg">
-            Get started free
+            Invitation only
           </Link>
           <Link href="/login" className="btn btnLg">
             Sign in
@@ -190,7 +190,7 @@ export default function Landing() {
               <li>✓ Unlimited documents &amp; e-sign</li>
             </ul>
             <Link href="/signup" className={`btn ${p.key === "pro" ? "btnPrimary" : ""}`} style={{ width: "100%", textAlign: "center" }}>
-              Start free
+              Invitation only
             </Link>
           </div>
         ))}
@@ -217,7 +217,7 @@ export default function Landing() {
           Join the agents and brokerages who let Pheme handle the paperwork.
         </p>
         <Link href="/signup" className="btn btnLg ctaButton">
-          Create your account
+          Invitation only
         </Link>
       </section>
     </div>

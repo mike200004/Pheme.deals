@@ -1,6 +1,7 @@
+import { parseChatTranscript } from "@/lib/chat-input";
 import { NextRequest, NextResponse } from "next/server";
 import { hasAiKey } from "@/lib/ai";
-import { runConversation, Turn } from "@/lib/conversation";
+import { runConversation } from "@/lib/conversation";
 import { getAccount } from "@/lib/auth";
 import { getProfile } from "@/lib/db";
 import { rateLimit } from "@/lib/ratelimit";
@@ -9,7 +10,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 interface ChatBody {
-  messages: Turn[];
+  messages: unknown;
 }
 
 export async function POST(req: NextRequest) {
@@ -44,7 +45,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const transcript: Turn[] = Array.isArray(body.messages) ? body.messages : [];
+  const transcript = parseChatTranscript(body);
+  if (!transcript) {
+    return NextResponse.json({ error: "Invalid or oversized conversation" }, { status: 400 });
+  }
   const profile = await getProfile(account.accountId);
 
   try {
@@ -61,7 +65,7 @@ export async function POST(req: NextRequest) {
       toolEvents,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("[chat] Conversation failed", err);
+    return NextResponse.json({ error: "The assistant could not complete your request. Please try again." }, { status: 500 });
   }
 }

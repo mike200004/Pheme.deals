@@ -51,7 +51,6 @@ import { generateAuthLink } from "@/lib/auth-links";
 import {
   sendInviteEmail,
   sendPasswordResetEmail,
-  sendWaitlistEmail,
 } from "@/lib/emails";
 import { defer } from "@/lib/defer";
 import type { AgentProfile, ContactRole, DocType, PlanKey } from "@/lib/types";
@@ -65,7 +64,7 @@ type ActionResult =
   | { ok: false; error: string };
 
 // ---------------------------------------------------------------------------
-// Account creation (owner) — admin-confirmed; creates profile + owner member.
+// Public account creation — closed; existing team invitations remain available.
 // ---------------------------------------------------------------------------
 
 export async function createAccountAction(input: {
@@ -78,87 +77,10 @@ export async function createAccountAction(input: {
   street?: string;
   city_state_zip?: string;
 }): Promise<ActionResult> {
-  // Signup is an unauthenticated admin-powered action — dampen abuse per IP.
-  const ip = ((await headers()).get("x-forwarded-for") || "unknown").split(",")[0].trim();
-  if (!rateLimit(`signup:${ip}`, 5, 60 * 60_000)) {
-    return { ok: false, error: "Too many signups from this connection — try again later." };
-  }
-  const email = input.email.trim().toLowerCase();
-  const phone = normalizePhone(input.phone);
-  if (!email || !input.password) return { ok: false, error: "Email and password are required." };
-  if (input.password.length < 8) return { ok: false, error: "Password must be at least 8 characters." };
-  if (!phone) return { ok: false, error: "A valid US mobile number is required (it's how your calls are matched to your account)." };
-
-  const sb = admin();
-  const { data: existing } = await sb
-    .from("account_members")
-    .select("id")
-    .eq("phone", phone)
-    .maybeSingle();
-  if (existing) return { ok: false, error: "That phone number is already registered." };
-
-  const { data: created, error: createErr } = await sb.auth.admin.createUser({
-    email,
-    password: input.password,
-    email_confirm: true,
-  });
-  if (createErr || !created.user) {
-    return { ok: false, error: createErr?.message || "Could not create account." };
-  }
-  const uid = created.user.id;
-
-  const { error: profileErr } = await sb.from("profiles").insert({
-    id: uid,
-    email,
-    phone,
-    agent_name: input.agent_name ?? "",
-    broker_agency_name: input.broker_agency_name ?? "",
-    license_number: input.license_number ?? "",
-    street: input.street ?? "",
-    city_state_zip: input.city_state_zip ?? "",
-  });
-  if (profileErr) {
-    await sb.auth.admin.deleteUser(uid);
-    // Under a race, the pre-checks miss and the DB unique constraint speaks —
-    // translate Postgres 23505 instead of leaking `duplicate key value…`.
-    return {
-      ok: false,
-      error:
-        profileErr.code === "23505"
-          ? "That phone number is already registered to another account."
-          : profileErr.message,
-    };
-  }
-
-  try {
-    await insertMember({
-      id: uid,
-      account_id: uid,
-      role: "owner",
-      name: (input.agent_name ?? "").trim(),
-      phone,
-      email,
-      // Private beta: new accounts start pending; an admin flips status to
-      // 'active' in Supabase to grant access.
-      status: "pending",
-    });
-  } catch (e) {
-    await sb.auth.admin.deleteUser(uid);
-    const msg = e instanceof Error ? e.message : "Could not create membership.";
-    return {
-      ok: false,
-      error: /duplicate key|23505/i.test(msg)
-        ? "That phone number is already registered to another account."
-        : msg,
-    };
-  }
-
-  // Welcome email (best-effort, after the response).
-  defer(async () => {
-    await sendWaitlistEmail(email, input.agent_name ?? "").catch(() => {});
-  });
-
-  return { ok: true };
+  // Keep the old action callable so stale signup clients fail closed too.
+  // Account provisioning must use an authenticated administrative workflow.
+  void input;
+  return { ok: false, error: "Pheme is invitation only. Please use your invitation email to join." };
 }
 
 // ---------------------------------------------------------------------------

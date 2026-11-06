@@ -78,6 +78,9 @@ interface StripeListed {
 }
 
 export async function POST(req: NextRequest) {
+  if (process.env.ENABLE_ADMIN_MAINTENANCE !== "true") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
   if (!authorized(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!stripeConfigured()) {
     return NextResponse.json({ error: "STRIPE_SECRET_KEY is not set on this deployment." }, { status: 500 });

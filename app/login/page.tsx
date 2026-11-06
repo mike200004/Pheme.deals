@@ -17,7 +17,7 @@ export default function LoginPage() {
         <LoginForm />
       </Suspense>
       <p className="muted" style={{ marginTop: 16 }}>
-        No account? <Link href="/signup">Create one</Link>. Forgot your password?{" "}
+        No account? <Link href="/signup">Invitation only</Link>. Forgot your password?{" "}
         <Link href="/forgot-password">Reset it</Link>.
       </p>
     </div>

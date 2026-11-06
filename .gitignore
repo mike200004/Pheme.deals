@@ -34,3 +34,6 @@ next-env.d.ts
 /.data
 .env*
 /public/pdf.worker.min.mjs
+
+# Supabase CLI local metadata
+/supabase/.temp/

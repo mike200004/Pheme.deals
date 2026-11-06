@@ -28,6 +28,9 @@ function authorized(req: NextRequest): boolean {
 }
 
 export async function POST(req: NextRequest) {
+  if (process.env.ENABLE_ADMIN_MAINTENANCE !== "true") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
   if (!authorized(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = (await req.json().catch(() => null)) as { email?: string } | null;

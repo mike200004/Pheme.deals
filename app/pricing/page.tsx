@@ -33,14 +33,14 @@ export default async function PricingPage() {
   // everyone else starts at signup.
   const account = await getAccount().catch(() => null);
   const ctaHref = account ? "/settings" : "/signup";
-  const ctaLabel = account ? "Choose in Settings" : "Start free trial";
+  const ctaLabel = account ? "Choose in Settings" : "Invitation only";
   return (
     <div className="stack">
       <header style={{ textAlign: "center" }}>
         <h1 className="pageTitle">Plans that scale with your talk time</h1>
         <p className="pageSub" style={{ maxWidth: 620, margin: "10px auto 0" }}>
           Documents, uploads, and e-signatures are unlimited on every plan. You pick a
-          plan based on how much you’ll actually talk to your AI assistant. Start free for{" "}
+          plan based on how much you’ll actually talk to your AI assistant. Invitation only for{" "}
           {TRIAL_DAYS} days.
         </p>
       </header>
@@ -82,7 +82,7 @@ export default async function PricingPage() {
 
       <p className="muted" style={{ textAlign: "center" }}>
         Prices in USD. Overage minutes are billed on your next invoice. Need more than Brokerage,
-        or a multi-office plan? <Link href="/signup">Create an account</Link> and reach out.
+        or a multi-office plan? <Link href="/signup">Invitation only</Link> and reach out.
       </p>
 
       <section style={{ maxWidth: 720, margin: "8px auto 0", width: "100%" }}>
@@ -102,10 +102,10 @@ export default async function PricingPage() {
         <p className="ctaSub">
           {account
             ? "Pick a plan whenever you're ready — your trial keeps running until then."
-            : `Free for ${TRIAL_DAYS} days — no credit card to start.`}
+            : "Pheme is currently available by invitation only."}
         </p>
         <Link href={account ? "/settings" : "/signup"} className="btn btnLg ctaButton">
-          {account ? "Go to your settings" : "Create your account"}
+          {account ? "Go to your settings" : "Invitation only"}
         </Link>
       </section>
     </div>

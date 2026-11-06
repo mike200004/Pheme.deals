@@ -1,6 +1,5 @@
 import Link from "next/link";
 import Image from "next/image";
-import SignupForm from "./SignupForm";
 
 export const dynamic = "force-dynamic";
 
@@ -10,12 +9,11 @@ export default function SignupPage() {
       <div className="authLogo">
         <Image src="/pheme-mark.png" alt="Pheme" width={1402} height={1122} priority />
       </div>
-      <h1 className="pageTitle">Create your account</h1>
+      <h1 className="pageTitle">Pheme is invitation only</h1>
       <p className="pageSub">
-        Sign up to use the assistant by web or phone. The phone number you
-        register is how your calls are matched to your account.
+        New accounts require an invitation. If you have been invited,
+        use the secure link in your invitation email to get started.
       </p>
-      <SignupForm />
       <p className="muted" style={{ marginTop: 16 }}>
         Already have an account? <Link href="/login">Sign in</Link>.
       </p>

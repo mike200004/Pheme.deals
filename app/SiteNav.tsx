@@ -67,7 +67,7 @@ export default function SiteNav({ email }: { email: string | null }) {
           ) : (
             <>
               <Link href="/login" className="navlink">Sign in</Link>
-              <Link href="/signup" className="btn btnPrimary">Sign up</Link>
+              <Link href="/signup" className="btn btnPrimary">Invitation only</Link>
             </>
           )}
         </div>
@@ -110,7 +110,7 @@ export default function SiteNav({ email }: { email: string | null }) {
                 Sign in
               </Link>
               <Link href="/signup" className="navMobileLink" onClick={() => setOpen(false)}>
-                Sign up
+                Invitation only
               </Link>
             </>
           )}

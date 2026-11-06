@@ -28,6 +28,11 @@ const ASSISTANT_ID = process.env.VAPI_ASSISTANT_ID || "8e46aebd-e589-4d6f-a614-7
  * failure we return the base assistant with minimal context.
  */
 export async function POST(req: NextRequest) {
+  // Caller ID is not sufficient proof of identity for sensitive client data.
+  // Keep phone access off until a separate caller-verification flow is deployed.
+  if (process.env.ENABLE_PHONE_ASSISTANT !== "true") {
+    return new NextResponse("Phone assistant is disabled", { status: 503 });
+  }
   if (!verifyVapiSecret(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

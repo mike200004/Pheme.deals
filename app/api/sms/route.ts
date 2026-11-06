@@ -50,6 +50,11 @@ function validSignature(
 }
 
 export async function POST(req: NextRequest) {
+  // Caller ID is not sufficient proof of identity for sensitive client data.
+  // Keep phone access off until a separate caller-verification flow is deployed.
+  if (process.env.ENABLE_PHONE_ASSISTANT !== "true") {
+    return new NextResponse("Phone assistant is disabled", { status: 503 });
+  }
   if (!hasAiKey()) {
     return twiml("The assistant is temporarily unavailable. Please try again shortly.");
   }
