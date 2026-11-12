@@ -19,6 +19,8 @@ export const maxDuration = 60;
 const CONSENT_TEXT =
   "By signing, I agree that my electronic signature is the legal equivalent of my handwritten signature, that I consent to conduct this transaction electronically under the U.S. ESIGN Act and applicable state law (including UETA), and that I have reviewed the document presented to me.";
 
+const MAX_NAME_CHARS = 120;
+
 async function resolveRequest(token: string) {
   const id = verifySignToken(token);
   if (!id) return null;
@@ -92,19 +94,41 @@ export async function POST(
     return NextResponse.json({ error: `This request was already ${reqRow.status}.` }, { status: 409 });
   }
 
-  let body: { action?: string; name?: string; signaturePng?: string; consent?: boolean };
+  let raw: { action?: unknown; name?: unknown; signaturePng?: unknown; consent?: unknown } | null;
   try {
-    body = await req.json();
+    raw = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
-
-  // Bound the embedded signature image: it's decoded, drawn into the PDF, and
-  // base64-attached to outgoing emails. A multi-MB data URL would amplify
-  // memory on every recipient. A normal canvas signature is well under this.
-  if (body.signaturePng && body.signaturePng.length > 350_000) {
-    return NextResponse.json({ error: "That signature image is too large — try drawing it again." }, { status: 413 });
+  // This endpoint is public (the token is the only credential), so treat every
+  // field as hostile: a non-string name used to throw on .trim() (500), and a
+  // non-string signature skipped the size check entirely.
+  if (!raw || typeof raw !== "object") {
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
+  if (raw.action !== "sign" && raw.action !== "decline") {
+    return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+  }
+  if (raw.name != null && typeof raw.name !== "string") {
+    return NextResponse.json({ error: "Type your full legal name to sign." }, { status: 400 });
+  }
+  if (raw.signaturePng != null && raw.signaturePng !== "") {
+    if (typeof raw.signaturePng !== "string" || !raw.signaturePng.startsWith("data:image/png;base64,")) {
+      return NextResponse.json({ error: "That signature didn't come through — try drawing it again." }, { status: 400 });
+    }
+    // Bound the embedded signature image: it's decoded, drawn into the PDF, and
+    // base64-attached to outgoing emails. A multi-MB data URL would amplify
+    // memory on every recipient. A normal canvas signature is well under this.
+    if (raw.signaturePng.length > 350_000) {
+      return NextResponse.json({ error: "That signature image is too large — try drawing it again." }, { status: 413 });
+    }
+  }
+  const body = {
+    action: raw.action,
+    name: raw.name as string | undefined,
+    signaturePng: (raw.signaturePng as string | undefined) || undefined,
+    consent: raw.consent === true,
+  };
 
   const agentProfile = await getProfile(doc.account_id);
 
@@ -130,6 +154,11 @@ export async function POST(
 
   const name = (body.name || reqRow.signer_name || "").trim();
   if (!name) return NextResponse.json({ error: "Type your full legal name to sign." }, { status: 400 });
+  // The name is stored as the signer of record, stamped on the certificate
+  // (which clips it) and emailed to the agent — keep it to a sane length.
+  if (name.length > MAX_NAME_CHARS) {
+    return NextResponse.json({ error: "That name is too long — type your full legal name." }, { status: 400 });
+  }
   if (!body.consent) {
     return NextResponse.json({ error: "You must agree to sign electronically." }, { status: 400 });
   }
