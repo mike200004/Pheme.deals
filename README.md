@@ -1,39 +1,42 @@
 # Pheme
 
 A personal home base for a real estate agent — clients, documents, and an AI
-assistant that fills out and files official Connecticut forms. Built so the same
-"brain" can later be driven by a phone call (Vapi) or text (Twilio).
+assistant that fills out, files and sends real-estate paperwork. The same
+"brain" is driven from the web chat, by text (Twilio) and by phone (Vapi).
 
-## What's here (Phase 1 — web foundation)
+## What's here
 
 - **Dashboard** — greeting, one-click new documents, recent docs, clients.
-- **Document engine** — fills three flat, legally-official CT PDFs by overlaying
-  typed values at mapped coordinates (the original form is preserved, not recreated):
-  1. Exclusive Right to Represent Buyer Agreement
-  2. Purchase Agreement (SmartMLS)
-  3. Dual Agency Consent Agreement
-- **AI assistant** — an OpenAI (GPT-4o) function-calling loop that can create
-  clients, create/fill documents conversationally, and file them. Exposed as a web
-  chat now; the same tool layer is reused by voice/SMS in Phase 2.
+- **Document engine** — a built-in library of 10 branded business forms (listing
+  agreement, addenda, deposit receipt, referral/commission paperwork, lead-paint
+  disclosure, rental application, …) with embedded AcroForm fields, plus the
+  agent's own uploaded PDFs (flat/scanned forms get their blanks detected with
+  GPT-4o vision). Filled with pdf-lib and flattened on demand.
+- **AI assistant** — an OpenAI function-calling loop (default `gpt-4.1-mini`,
+  override with `OPENAI_MODEL`) that can create clients, create/fill documents
+  conversationally, file them, and request signatures. The same tool layer
+  drives the web chat, SMS (Twilio) and the phone assistant (Vapi).
 - **Settings** — your agent profile auto-fills the broker/agency side of every form.
 
 ## Tech stack
 
 - Next.js 15 (App Router) + React 19 + TypeScript
 - [pdf-lib](https://pdf-lib.js.org) for PDF filling (Node runtime; Vercel-friendly)
-- [openai](https://github.com/openai/openai-node) (GPT-4o function calling) for the assistant
-- Supabase for persistence (with a local-file fallback for dev)
+- [openai](https://github.com/openai/openai-node) (function calling) for the assistant
+- Supabase for auth, data and file storage
 
 ## Getting started
 
 ```bash
-npm install
-cp .env.example .env.local   # add your ANTHROPIC_API_KEY to enable the assistant
+npm ci
+cp .env.example .env.local   # Supabase keys are required; OPENAI_API_KEY enables the assistant
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Without Supabase env vars the
-app stores data in a local `.data/store.json` file, so it works immediately.
+Open [http://localhost:3000](http://localhost:3000). A Supabase project is
+required (auth, data and storage all live there) — see **Supabase setup** below.
+`.env.example` documents every variable; Stripe, Resend, Twilio and Vapi are
+only needed for billing, email, SMS and voice respectively.
 
 ## Architecture
 
@@ -44,40 +47,51 @@ app/
   assistant/                    AI chat UI
   settings/                     Agent profile
   api/chat/                     OpenAI function-calling loop (the AI brain)
+  api/sms/, api/voice/          Twilio SMS + Vapi phone webhooks (same tools)
   api/documents/[id]/pdf/       Generates the filled PDF on demand
+  api/share/, api/sign/         Public token-authorized share + e-sign links
   actions.ts                    Server actions (profile/client/document writes)
 lib/
-  templates/                    Field schemas + coordinate maps per form
-  pdf/fill.ts                   pdf-lib overlay engine
+  templates/                    Field schemas per form (generated.ts is generated)
+  pdf/fill.ts                   pdf-lib fill/flatten + signature certificate
   tools/                        AI tool definitions + handlers (shared seam)
-  db.ts                         Storage (Supabase or local-file fallback)
+  db.ts                         Data access (Supabase, scoped by account)
   ai.ts                         OpenAI client + system prompt + tool format
-templates/*.pdf                 The three source forms
-supabase/migrations/            DB schema (apply when the project is provisioned)
+templates/*.pdf                 The built-in form library (scripts/generate-templates.mjs)
+supabase/migrations/            DB schema, applied in order
+tests/                          Unit tests (node:test)
 ```
 
-The **AI tool layer** (`lib/tools`) is the integration seam: the web chat calls it
-today; the planned Vapi voice webhook and Twilio SMS webhook will call the same
-tools, so adding voice/SMS is not a rewrite.
+The **AI tool layer** (`lib/tools`) is the integration seam: the web chat, the
+Twilio SMS webhook and the Vapi voice webhook all call the same tools. The voice
+tool list is declared to Vapi separately in `scripts/update-vapi.mjs`;
+`scripts/check-tool-sync.mjs` (run by `prebuild`) fails the build if the two
+drift.
 
 ## Supabase setup
 
-`supabase/migrations/0001_init.sql` creates `agent_profile`, `clients`, and
-`documents`. Apply it once a project exists (Supabase MCP `apply_migration` or
-`supabase db push`), then set the `NEXT_PUBLIC_SUPABASE_URL` /
-`SUPABASE_SERVICE_ROLE_KEY` env vars — the app switches from the local file store
-to Supabase automatically.
+Apply every file in `supabase/migrations/` in numeric order (Supabase MCP
+`apply_migration` or `supabase db push`), then set `NEXT_PUBLIC_SUPABASE_URL`,
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`.
 
 ## Features
 
 - Agent dashboard + profile
-- Document engine for the 3 CT forms (overlay onto the official PDFs)
+- Document engine: built-in form library + the agent's own uploaded PDFs
+- E-signatures: secure signing links with an appended signature certificate
 - AI assistant (create/fill/file/send documents) on web, voice, and SMS
 - Accounts + auth; team members (assistants) with delegated access and per-actor attribution
 - Caller-ID gating: only registered numbers reach the phone/SMS assistant
-- Document delivery: text a recipient a secure link to the filled PDF (`send_document`)
+- Document delivery: email the PDF (`email_document`), or prepare a tap-to-send
+  text with a secure link that goes out from the agent's own phone (`send_document`
+  — Pheme sends no outbound SMS itself)
 
 ## Dev notes
 
-`scripts/test-fill.mjs` renders each template with sample data to `/tmp/fill-test`
-for eyeballing coordinate placement: `node scripts/test-fill.mjs`.
+- `npm run typecheck` — `tsc --noEmit`.
+- `npm test` — unit tests in `tests/` (Node's built-in runner; needs Node 22.18+
+  for native TypeScript type stripping).
+- `npm run test:templates` — fills and flattens every built-in template and
+  checks each value renders (needs `pdftotext` from poppler); output PDFs land
+  in `/tmp/lib-<id>.pdf` for eyeballing.
+- CI (`.github/workflows/ci.yml`) runs all of the above plus `npm run build`.
