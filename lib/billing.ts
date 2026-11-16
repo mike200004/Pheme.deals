@@ -229,14 +229,18 @@ export async function getPlanState(accountId: string): Promise<PlanState> {
     };
   }
 
-  // No live subscription — the account is on (or past) the signup trial.
+  // No live subscription — the account is on (or past) the trial, which
+  // starts at approval (the waitlist email promises that). Owners approved
+  // before approved_at existed fall back to their signup time. select("*")
+  // so this keeps working if the code deploys before migration 0017.
   const { data: owner, error: ownerErr } = await admin()
     .from("account_members")
-    .select("created_at")
+    .select("*")
     .eq("id", accountId)
     .maybeSingle();
   if (ownerErr) throw new Error(`trial window read failed: ${ownerErr.message}`);
-  const started = owner?.created_at ? new Date(owner.created_at).getTime() : Date.now();
+  const trialFrom = owner?.approved_at || owner?.created_at;
+  const started = trialFrom ? new Date(trialFrom).getTime() : Date.now();
   const daysUsed = (Date.now() - started) / 86_400_000;
   if (daysUsed <= TRIAL_DAYS) {
     return {

@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
 
   const { error: updErr } = await sb
     .from("account_members")
-    .update({ status: "active" })
+    .update({ status: "active", approved_at: new Date().toISOString() })
     .eq("id", member.id)
     .eq("role", "owner");
   if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
