@@ -435,8 +435,14 @@ async function consolidate(accountId: string, keep: Client): Promise<Client> {
   const dups = (await listClients(accountId)).filter((c) => {
     if (c.id === keep.id || !roleCompatible(c.role, keep.role)) return false;
     // Exact same name + compatible role: treat as the same party (consistent
-    // with upsertClientByName's exact-match behavior).
-    if (normName(c.full_name) === normName(keep.full_name)) return true;
+    // with upsertClientByName's exact-match behavior) — unless the two have a
+    // different email or phone. Then they're two people who share a name, and
+    // merging would delete one of them along with their contact details.
+    if (normName(c.full_name) === normName(keep.full_name)) {
+      const differ = (a?: string | null, b?: string | null) =>
+        Boolean(a && b && a.trim().toLowerCase() !== b.trim().toLowerCase());
+      return !differ(c.email, keep.email) && !differ(c.phone, keep.phone);
+    }
     // Otherwise only fold a skeletal stub of the same likely person.
     if (surnameStem(c.full_name) !== stem || !firstNameCompatible(c.full_name, keep.full_name)) return false;
     return !c.email && !c.phone && !c.company && !c.secondary_name;
@@ -452,6 +458,7 @@ async function consolidate(accountId: string, keep: Client): Promise<Client> {
     if (!keep.secondary_name && d.secondary_name) merged.secondary_name = d.secondary_name;
     if (!keep.email && d.email) merged.email = d.email;
     if (!keep.phone && d.phone) merged.phone = d.phone;
+    if (!keep.company && d.company) merged.company = d.company;
     if (d.role && d.role !== keep.role) merged.role = keep.role ? "both" : d.role;
   }
   await patchClient(accountId, keep.id, merged);
@@ -1035,10 +1042,14 @@ export async function isLocked(accountId: string, docId: string): Promise<boolea
 }
 
 /** Latest completed signature for a document, if any (signed PDFs chain). */
-export async function latestSignedRequest(documentId: string): Promise<SignatureRequest | null> {
+export async function latestSignedRequest(
+  accountId: string,
+  documentId: string,
+): Promise<SignatureRequest | null> {
   const { data, error } = await admin()
     .from("signature_requests")
     .select("*")
+    .eq("account_id", accountId)
     .eq("document_id", documentId)
     .eq("status", "signed")
     .order("signed_at", { ascending: false })

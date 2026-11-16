@@ -496,8 +496,9 @@ export async function saveDocumentFieldsAction(docId: string, formData: FormData
   if (!doc) return;
   // The editor disables its inputs on an executed document, but that's only
   // rendering — enforce the lock server-side too, so the stored fields can
-  // never drift from what was actually signed.
-  if (await isLocked(accountId, docId)) return;
+  // never drift from what was actually signed. Throw rather than return, so
+  // the editor shows an error instead of "Saved".
+  if (await isLocked(accountId, docId)) throw new Error("Document is out for signature or signed");
   let valid: string[];
   if (doc.template_id) {
     const ft = await getFormTemplate(accountId, doc.template_id);

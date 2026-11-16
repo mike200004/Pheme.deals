@@ -56,6 +56,10 @@ export default async function DocumentPage({
   }
 
   const signedReq = sigRequests.find((r) => r.status === "signed");
+  // The server refuses edits while a request is pending too (the signer is
+  // reviewing this exact copy), so lock the editor instead of letting a save
+  // look like it worked.
+  const pendingReq = sigRequests.find((r) => r.status === "pending");
   const signatures = sigRequests
     .filter((r) => r.status === "pending" || r.status === "signed")
     .map((r) => ({
@@ -137,6 +141,13 @@ export default async function DocumentPage({
         </div>
       )}
 
+      {!signedReq && pendingReq && (
+        <div className="notice">
+          Out for signature with <strong>{pendingReq.signer_name || "your signer"}</strong> — editing is
+          locked so they sign exactly what they reviewed. Cancel the request below to make changes.
+        </div>
+      )}
+
       {!isUploaded && !profile && (
         <div className="notice">
           No agent profile set — the broker/agency section will be blank. Add it in{" "}
@@ -151,7 +162,7 @@ export default async function DocumentPage({
         status={doc.status}
         fields={fields}
         values={doc.fields}
-        locked={Boolean(signedReq)}
+        locked={Boolean(signedReq || pendingReq)}
         signatures={signatures}
       />
     </div>

@@ -280,7 +280,7 @@ export async function renderDocument(
   // Once a document has been signed, the signed PDF (with its certificate
   // page) is the document of record everywhere.
   if (!opts?.ignoreSigned) {
-    const signed = await latestSignedRequest(doc.id);
+    const signed = await latestSignedRequest(doc.account_id, doc.id);
     if (signed?.signed_path) {
       const { data, error } = await admin().storage.from(BUCKET).download(signed.signed_path);
       // Falling through to a fresh render here would hand someone a BLANK,

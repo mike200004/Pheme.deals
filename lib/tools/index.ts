@@ -297,10 +297,14 @@ async function docSchema(acc: string, doc: DocumentRecord): Promise<DocSchema> {
   }
   const type = doc.type as DocType;
   const fields = fieldSchemaFor(type);
+  // Some required fields (e.g. the ICA's brokerage firm) fill from the agent
+  // profile and can't be set by the model. Without the profile they always
+  // look missing.
+  const profile = await getProfile(acc).catch(() => null);
   return {
     validKeys: new Set(userFields(type).filter((f) => !f.source).map((f) => f.key)),
     fields,
-    missing: (values) => missingLabels(type, values),
+    missing: (values) => missingLabels(type, values, profile),
     uploaded: false,
     resolveKey: makeResolver(fields),
   };
@@ -540,12 +544,13 @@ export async function runTool(
           note: "Walk the WHOLE document in this exact order, one line at a time — don't stop after the required ones. Set values with set_document_fields using these labels as keys; its result tells you the next line. Skipped line = set it to '-'.",
         };
       }
+      const profile = await getProfile(acc).catch(() => null);
       return {
         document_id: doc.id,
         type,
         title: doc.title,
         fields: fieldSchemaFor(type),
-        missing_required: missingLabels(type, doc.fields),
+        missing_required: missingLabels(type, doc.fields, profile),
       };
     }
 
@@ -669,7 +674,8 @@ export async function runTool(
       const docId = String(input.document_id);
       const doc = await getDocument(acc, docId);
       if (!doc) return { error: `Document ${docId} not found — use the id returned by create_document, or find it with list_documents.` };
-      const missing = !doc.template_id && isDocType(doc.type) ? missingLabels(doc.type, doc.fields) : [];
+      const profile = await getProfile(acc).catch(() => null);
+      const missing = !doc.template_id && isDocType(doc.type) ? missingLabels(doc.type, doc.fields, profile) : [];
       if (missing.length) {
         return { ok: false, missing_required: missing, message: "Fill the required fields before sending." };
       }
@@ -705,7 +711,6 @@ export async function runTool(
 
       // "Send it to me": email is the reliable self-copy — the link lands in
       // the agent's inbox instead of a text that carriers may drop.
-      const profile = await getProfile(acc);
       const selfEmail = profile?.email || "";
       if (!selfEmail || !emailConfigured()) {
         return {
@@ -730,7 +735,8 @@ export async function runTool(
       const docId = String(input.document_id);
       const doc = await getDocument(acc, docId);
       if (!doc) return { error: `Document ${docId} not found — use the id returned by create_document, or find it with list_documents.` };
-      const miss = !doc.template_id && isDocType(doc.type) ? missingLabels(doc.type, doc.fields) : [];
+      const senderProfile = await getProfile(acc).catch(() => null);
+      const miss = !doc.template_id && isDocType(doc.type) ? missingLabels(doc.type, doc.fields, senderProfile) : [];
       if (miss.length) {
         return { ok: false, missing_required: miss, message: "Fill the required fields before sending." };
       }
@@ -738,7 +744,6 @@ export async function runTool(
         return { ok: false, message: "Fill at least one field before sending." };
       }
       let to = String(input.to_email || "").trim();
-      const senderProfile = await getProfile(acc).catch(() => null);
       if (!to) to = senderProfile?.email || ""; // "email it to me"
       if (!/.+@.+\..+/.test(to)) {
         return { ok: false, message: "What email address should I send it to?" };

@@ -4,6 +4,7 @@ import {
   getDocumentById,
   getProfile,
   getSignatureRequestById,
+  latestSignedRequest,
   transitionSignatureRequest,
   updateSignatureRequest,
 } from "@/lib/db";
@@ -27,7 +28,10 @@ async function resolveRequest(token: string) {
   const reqRow = await getSignatureRequestById(id);
   if (!reqRow) return null;
   const doc = await getDocumentById(reqRow.document_id);
-  if (!doc) return null;
+  // A request may only ever sign its own account's document. Without this, a
+  // request row pointed at someone else's document_id would stamp and store
+  // a "signed" copy under the victim's account.
+  if (!doc || doc.account_id !== reqRow.account_id) return null;
   return { reqRow, doc };
 }
 
@@ -161,6 +165,16 @@ export async function POST(
   }
   if (!body.consent) {
     return NextResponse.json({ error: "You must agree to sign electronically." }, { status: 400 });
+  }
+
+  // Requests made before only one could be open at a time may still have a
+  // second link out. Signing it would render the unsigned source plus only
+  // this certificate and replace the first signature as the document of record.
+  if (await latestSignedRequest(doc.account_id, doc.id)) {
+    return NextResponse.json(
+      { error: "This document was already signed by someone else. Ask the agent for a new copy." },
+      { status: 409 },
+    );
   }
 
   const signedAtIso = new Date().toISOString();
