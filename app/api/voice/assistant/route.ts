@@ -288,7 +288,7 @@ async function buildOverrides(
     const title = draft.title || "an untitled document";
     let detail = "";
     if (!draft.template_id && isDocType(draft.type)) {
-      const missing = missingRequired(draft.type, draft.fields);
+      const missing = missingRequired(draft.type, draft.fields, profile);
       const labels = missing
         .map((k) => userFields(draft.type as DocType).find((f) => f.key === k)?.label ?? k)
         .slice(0, 6);
