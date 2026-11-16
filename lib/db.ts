@@ -1035,10 +1035,14 @@ export async function isLocked(accountId: string, docId: string): Promise<boolea
 }
 
 /** Latest completed signature for a document, if any (signed PDFs chain). */
-export async function latestSignedRequest(documentId: string): Promise<SignatureRequest | null> {
+export async function latestSignedRequest(
+  accountId: string,
+  documentId: string,
+): Promise<SignatureRequest | null> {
   const { data, error } = await admin()
     .from("signature_requests")
     .select("*")
+    .eq("account_id", accountId)
     .eq("document_id", documentId)
     .eq("status", "signed")
     .order("signed_at", { ascending: false })

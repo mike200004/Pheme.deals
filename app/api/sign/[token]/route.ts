@@ -27,7 +27,10 @@ async function resolveRequest(token: string) {
   const reqRow = await getSignatureRequestById(id);
   if (!reqRow) return null;
   const doc = await getDocumentById(reqRow.document_id);
-  if (!doc) return null;
+  // A request may only ever sign its own account's document. Without this, a
+  // request row pointed at someone else's document_id would stamp and store
+  // a "signed" copy under the victim's account.
+  if (!doc || doc.account_id !== reqRow.account_id) return null;
   return { reqRow, doc };
 }
 
