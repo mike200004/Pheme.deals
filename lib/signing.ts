@@ -1,4 +1,4 @@
-import { createSignatureRequest, getDocument, getProfile, latestSignedRequest } from "@/lib/db";
+import { createSignatureRequest, getDocument, getProfile, isLocked } from "@/lib/db";
 import { isDocType, missingRequired, userFields } from "@/lib/templates";
 import type { DocType } from "@/lib/types";
 import { makeSignToken } from "@/lib/share";
@@ -36,11 +36,14 @@ export async function requestSignature(
   // A second signing round would ERASE the first: the sign route renders the
   // unsigned source and appends only the new certificate, and that becomes the
   // document of record everywhere. Two-party signing must go through an
-  // amendment/duplicate until countersigning exists.
-  if (await latestSignedRequest(doc.id)) {
+  // amendment/duplicate until countersigning exists. A PENDING request counts
+  // too: with two links out, whoever signs second overwrites the first
+  // signature.
+  if (await isLocked(accountId, doc.id)) {
     return {
       ok: false,
-      message: "That document is already executed — duplicate it to start a new signing round.",
+      message:
+        "That document is already out for signature or executed — cancel the open request, or duplicate the document to start a new signing round.",
     };
   }
 
